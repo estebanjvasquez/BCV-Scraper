@@ -5,7 +5,11 @@ compatibility_date = "2026-08-01"
 [[d1_databases]]
 binding = "DB"
 database_name = "bcv_rates"
-database_id = "TU_DATABASE_ID"
+database_id = "7a9062a4-5965-46de-a541-bc8e2a37a963"
 
 [triggers]
 crons = ["0 3 * * *"]
+
+routes = [
+  { pattern = "bcv-api.sisteg.net", custom_domain = true }
+]

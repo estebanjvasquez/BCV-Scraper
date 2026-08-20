@@ -1,0 +1,5 @@
+# Copiar a .dev.vars (gitignored) para desarrollo local con `wrangler dev`.
+# En producción estos valores se cargan con `wrangler secret put <NOMBRE>` (ver README).
+
+INGEST_TOKEN=genera-un-token-largo-y-aleatorio
+ALERT_WEBHOOK_URL=https://tu-n8n.dominio.com/webhook/bcv-alert

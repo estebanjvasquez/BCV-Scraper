@@ -1,0 +1,19 @@
+{
+  "name": "bcv-rate-api",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Cloudflare Worker + D1 API que recibe e historiza las tasas de cambio del BCV, alimentado por un workflow de n8n.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail",
+    "db:create": "wrangler d1 create bcv_rates",
+    "db:migrate": "wrangler d1 execute bcv_rates --remote --file=./schema.sql",
+    "db:migrate:local": "wrangler d1 execute bcv_rates --local --file=./schema.sql",
+    "secret:ingest-token": "wrangler secret put INGEST_TOKEN",
+    "secret:alert-webhook": "wrangler secret put ALERT_WEBHOOK_URL"
+  },
+  "devDependencies": {
+    "wrangler": "^4.124.0"
+  }
+}
