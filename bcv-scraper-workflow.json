@@ -1,0 +1,238 @@
+{
+  "name": "BCV Rate Scraper",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            { "field": "cronExpression", "expression": "*/30 15-23 * * 1-5" },
+            { "field": "cronExpression", "expression": "0 12 * * *" }
+          ]
+        }
+      },
+      "id": "n1-schedule",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "a1", "name": "apiUrl", "value": "https://bcv-rate-api.TU-SUBDOMINIO.workers.dev", "type": "string" },
+            { "id": "a2", "name": "alertWebhookUrl", "value": "https://tu-n8n.dominio.com/webhook/bcv-alert", "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "n1b-config",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [130, 300],
+      "notes": "Edita apiUrl (tu Worker de Cloudflare) y alertWebhookUrl aqui, una sola vez."
+    },
+    {
+      "parameters": {
+        "url": "https://www.bcv.org.ve/",
+        "method": "GET",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "User-Agent", "value": "bcv-rate-feed/1.0 (contacto: tu-email@dominio.com)" }
+          ]
+        },
+        "options": {
+          "timeout": 15000,
+          "allowUnauthorizedCerts": true,
+          "response": { "response": { "responseFormat": "text" } }
+        }
+      },
+      "id": "n2-fetch",
+      "name": "Fetch BCV Page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [340, 300],
+      "continueOnFail": true,
+      "notes": "allowUnauthorizedCerts=true bypasea el cert invalido del BCV"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const item = $input.first().json;\n\nif (item.error) {\n  return [{ json: { ok: false, stage: 'fetch', error: String(item.error) } }];\n}\n\nconst html = item.data || item.body || '';\nif (!html || typeof html !== 'string') {\n  return [{ json: { ok: false, stage: 'fetch', error: 'respuesta vacia o no-texto del BCV' } }];\n}\n\nconst text = html.replace(/<[^>]*>/g, ' ').replace(/\\s+/g, ' ');\n\nfunction parseNumber(txt) {\n  return parseFloat(txt.trim().replace(/\\./g, '').replace(',', '.'));\n}\n\nfunction extract(regex) {\n  const m = text.match(regex);\n  return m ? m[1] : null;\n}\n\nconst raw = {\n  USD: extract(/USD\\s*([\\d.]+,\\d+)/),\n  EUR: extract(/EUR\\s*([\\d.]+,\\d+)/),\n  CNY: extract(/CNY\\s*([\\d.]+,\\d+)/),\n  TRY: extract(/TRY\\s*([\\d.]+,\\d+)/),\n  RUB: extract(/RUB\\s*([\\d.]+,\\d+)/),\n};\n\nconst rates = {};\nfor (const code of Object.keys(raw)) {\n  if (raw[code]) rates[code] = parseNumber(raw[code]);\n}\n\nconst dateMatch = text.match(/Fecha Valor:\\s*[A-Za-z]+,?\\s*(\\d{1,2})\\s+([A-Za-z]+)\\s+(\\d{4})/i);\nconst MESES = { enero: 1, febrero: 2, marzo: 3, abril: 4, mayo: 5, junio: 6, julio: 7, agosto: 8, septiembre: 9, octubre: 10, noviembre: 11, diciembre: 12 };\n\nlet valueDate = null;\nif (dateMatch) {\n  const day = dateMatch[1];\n  const mesTxt = dateMatch[2].toLowerCase();\n  const year = dateMatch[3];\n  const month = MESES[mesTxt];\n  if (month) valueDate = year + '-' + String(month).padStart(2, '0') + '-' + String(day).padStart(2, '0');\n}\n\nif (!valueDate) {\n  return [{ json: { ok: false, stage: 'parse', error: 'no se encontro Fecha Valor' } }];\n}\nif (Object.keys(rates).length < 5) {\n  return [{ json: { ok: false, stage: 'parse', error: Object.keys(rates).length + '/5 tasas extraidas', rates } }];\n}\nfor (const c of Object.keys(rates)) {\n  if (!rates[c] || rates[c] <= 0) {\n    return [{ json: { ok: false, stage: 'validate', error: 'valor invalido en ' + c } }];\n  }\n}\n\nreturn [{ json: { ok: true, valueDate: valueDate, scrapedAt: new Date().toISOString(), rates: rates } }];"
+      },
+      "id": "n3-parse",
+      "name": "Parse & Validate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [560, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "typeValidation": "loose" },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "n4-if-parsed",
+      "name": "IF: Parsed OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [800, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $node['Config'].json.apiUrl }}/rates/latest/USD",
+        "options": { "timeout": 10000 }
+      },
+      "id": "n5-getlatest",
+      "name": "Get Latest USD",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1040, 180],
+      "continueOnFail": true,
+      "notes": "404 esperado en la primera corrida (no hay data aun)."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "typeValidation": "loose" },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $node['Parse & Validate'].json.valueDate }}",
+              "rightValue": "={{ $json.value_date }}",
+              "operator": { "type": "string", "operation": "notEquals" }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "n6-if-newdate",
+      "name": "IF: Is New Date?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1300, 180]
+    },
+    {
+      "parameters": {
+        "url": "={{ $node['Config'].json.apiUrl }}/ingest",
+        "method": "POST",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { valueDate: $node['Parse & Validate'].json.valueDate, scrapedAt: $node['Parse & Validate'].json.scrapedAt, rates: $node['Parse & Validate'].json.rates } }}",
+        "options": { "timeout": 10000 }
+      },
+      "id": "n7-postingest",
+      "name": "POST Ingest",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1560, 100],
+      "continueOnFail": true,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REEMPLAZAR",
+          "name": "BCV Ingest Token"
+        }
+      },
+      "notes": "Credencial Header Auth: Name=Authorization, Value=Bearer <tu INGEST_TOKEN del Worker>. Crear/seleccionar tras importar."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "typeValidation": "loose" },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.error }}",
+              "rightValue": "",
+              "operator": { "type": "string", "operation": "notExists" }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "n8-if-ingestok",
+      "name": "IF: Ingest OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1820, 100]
+    },
+    {
+      "parameters": {},
+      "id": "n9-nochange",
+      "name": "No Change",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1560, 260],
+      "notes": "misma value_date que ya esta en D1, nada que hacer"
+    },
+    {
+      "parameters": {
+        "url": "={{ $node['Config'].json.alertWebhookUrl }}",
+        "method": "POST",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { text: 'BCV scraper fallo: ' + JSON.stringify($json) } }}",
+        "options": { "timeout": 10000 }
+      },
+      "id": "n10-notifyerror",
+      "name": "Notify Error",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1040, 460],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {},
+      "id": "n11-success",
+      "name": "Success",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [2080, 100]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": { "main": [[{ "node": "Config", "type": "main", "index": 0 }]] },
+    "Config": { "main": [[{ "node": "Fetch BCV Page", "type": "main", "index": 0 }]] },
+    "Fetch BCV Page": { "main": [[{ "node": "Parse & Validate", "type": "main", "index": 0 }]] },
+    "Parse & Validate": { "main": [[{ "node": "IF: Parsed OK?", "type": "main", "index": 0 }]] },
+    "IF: Parsed OK?": {
+      "main": [
+        [{ "node": "Get Latest USD", "type": "main", "index": 0 }],
+        [{ "node": "Notify Error", "type": "main", "index": 0 }]
+      ]
+    },
+    "Get Latest USD": { "main": [[{ "node": "IF: Is New Date?", "type": "main", "index": 0 }]] },
+    "IF: Is New Date?": {
+      "main": [
+        [{ "node": "POST Ingest", "type": "main", "index": 0 }],
+        [{ "node": "No Change", "type": "main", "index": 0 }]
+      ]
+    },
+    "POST Ingest": { "main": [[{ "node": "IF: Ingest OK?", "type": "main", "index": 0 }]] },
+    "IF: Ingest OK?": {
+      "main": [
+        [{ "node": "Success", "type": "main", "index": 0 }],
+        [{ "node": "Notify Error", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "pinData": {}
+}
